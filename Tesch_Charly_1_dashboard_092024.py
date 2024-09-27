@@ -9,6 +9,7 @@ import shap
 from azure.storage.blob import BlobServiceClient
 import os
 import io
+import pickle
 
 base_url = "https://oc-ds-p7-gqa9eqdze5hhakg3.eastus-01.azurewebsites.net"
 predict_url = f"{base_url}/predict"
@@ -18,22 +19,27 @@ connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING").replace('"', ""
 @st.cache_data
 def load_data(container_name, connection_string):
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-    
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob="DATA/application_train.csv")
-    csv_data = blob_client.download_blob().readall()
-    data = pd.read_csv(io.BytesIO(csv_data))
 
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob="DATA/data_prep/X_test.npy")
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name, blob="X_test.npy"
+    )
     npy_data = blob_client.download_blob().readall()
     clients_sample_data = np.load(io.BytesIO(npy_data))
 
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob="DATA/data_prep/features_names.txt")
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name, blob="features_names.txt"
+    )
     features_names_data = blob_client.download_blob().readall()
-    features_names = features_names_data.decode("utf-8").replace("[", "").replace("]", "")[1:-1].split("', '")
-    
+    features_names = (
+        features_names_data.decode("utf-8")
+        .replace("[", "")
+        .replace("]", "")[1:-1]
+        .split("', '")
+    )
+
     clients_sample_df = pd.DataFrame(clients_sample_data, columns=features_names)
     clients_sample_df["SK_ID_CURR"] = clients_sample_df["SK_ID_CURR"].astype(int)
-    return data, clients_sample_df
+    return clients_sample_df
 
 
 def create_label_mappings(data):
@@ -120,28 +126,23 @@ def init_session_state():
         st.session_state.modified_features = None
 
 
-def plot_comparison(data, client_sample_df, variable, client_value):
-    combined_df = pd.concat([data, client_sample_df], axis=0, ignore_index=True)
-    try:
-        lower_bound = combined_df[variable].quantile(0.01)
-        upper_bound = combined_df[variable].quantile(0.99)
-        within_bounds = combined_df[variable].between(lower_bound, upper_bound)
-        outliers = combined_df[~within_bounds]
-    except Exception as e:
-        lower_bound, upper_bound = None, None
-        outliers = pd.Series()
-
-    fig, ax = plt.subplots()
-    sns.histplot(
-        combined_df[variable], label="All clients", color="blue", alpha=0.5, ax=ax
+def get_plot(feature):
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    blob_client = blob_service_client.get_blob_client(
+        container="plots", blob=f"{feature}.pkl"
     )
+    plot_data = blob_client.download_blob().readall()
+    fig = pickle.loads(plot_data)
+    return fig
+
+
+def plot_feature_distribution(feature, client_value):
+    fig = get_plot(feature)
+    ax = fig.get_axes()[0]
     ax.axvline(client_value, color="red", label="Selected client", linestyle="--")
-    ax.set_title(f"Comparison of {variable}")
-    ax.set_xlabel(variable)
+    ax.set_title(f"Distribution of {feature}")
+    ax.set_xlabel(feature)
     ax.set_ylabel("Frequency")
-    ax.legend()
-    if not outliers.empty:
-        ax.set_xlim(lower_bound, upper_bound)
     return fig
 
 
@@ -163,15 +164,12 @@ def send_modified_features(modified_features, client_data):
 
 
 def main():
-    data, clients_sample_df = load_data(container_name="data", connection_string=connection_string)
-    label_mappings, reverse_label_mappings = create_label_mappings(data)
+    clients_sample_df = load_data(
+        container_name="test-data", connection_string=connection_string
+    )
 
     clients_sample_df.set_index("SK_ID_CURR", inplace=True)
     clients_sample_df_display = clients_sample_df.copy()
-
-    for col, mapping in label_mappings.items():
-        if col in clients_sample_df.columns:
-            clients_sample_df_display[col] = clients_sample_df[col].map(mapping)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -183,9 +181,7 @@ def main():
             "Select a variable to compare", options=clients_sample_df.columns[:-1]
         )
     st.pyplot(
-        plot_comparison(
-            data,
-            clients_sample_df_display,
+        plot_feature_distribution(
             variable_to_compare,
             client_data[variable_to_compare],
         )
