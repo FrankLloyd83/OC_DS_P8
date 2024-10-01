@@ -140,8 +140,8 @@ def plot_feature_distribution(feature, client_value):
     fig = get_plot(feature)
     ax = fig.get_axes()[0]
     ax.axvline(client_value, color="red", label="Selected client", linestyle="--")
-    ax.set_title(f"Distribution of {feature}")
-    ax.set_xlabel(feature)
+    ax.set_title(f"Distribution of {feature.split('/')[-1]}")
+    ax.set_xlabel(feature.split("/")[-1])
     ax.set_ylabel("Frequency")
     return fig
 
@@ -163,14 +163,14 @@ def send_modified_features(modified_features, client_data):
     return get_prediction(list(modified_client_data.values()))
 
 
-def main():
-    clients_sample_df = load_data(
-        container_name="test-data", connection_string=connection_string
-    )
+def custom_formatter(value, _):
+    if value < 10000:
+        return f"{value:.0f}"
+    else:
+        return f"{value:.1e}" 
+    
 
-    clients_sample_df.set_index("SK_ID_CURR", inplace=True)
-    clients_sample_df_display = clients_sample_df.copy()
-
+def display_homepage(clients_sample_df):
     col1, col2 = st.columns(2)
     with col1:
         client_id = st.selectbox("Select a client ID", clients_sample_df.index)
@@ -180,9 +180,10 @@ def main():
         variable_to_compare = st.selectbox(
             "Select a variable to compare", options=clients_sample_df.columns[:-1]
         )
+        bivariate_variable = "bivariate/" + variable_to_compare
     st.pyplot(
         plot_feature_distribution(
-            variable_to_compare,
+            bivariate_variable,
             client_data[variable_to_compare],
         )
     )
@@ -257,6 +258,44 @@ def main():
                 threshold = modified_prediction["threshold"]
                 delta = probability - st.session_state.prediction_result["proba"]
                 st.plotly_chart(plot_probability_gauge(probability, threshold, delta))
+    
+
+def display_variable_comparison():
+    variable_list = ["AGE", "AMT_INCOME_TOTAL", "AMT_CREDIT", "CREDIT_DURATION_ESTIMATE"]
+    col1, col2 = st.columns(2)
+    with col1:
+        variable1 = st.selectbox("Select a grouping variable", variable_list)
+    with col2:
+        variable2 = st.selectbox("Select another variable", variable_list)
+
+    if variable1 == variable2:
+        st.error("Please select two different variables")
+        return
+    
+    fig = get_plot(f"groupby/{variable1}__{variable2}")
+    for ax in fig.get_axes():
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(custom_formatter))
+    st.pyplot(fig)
+
+
+def main():
+    clients_sample_df = load_data(
+        container_name="test-data", connection_string=connection_string
+    )
+
+    clients_sample_df.set_index("SK_ID_CURR", inplace=True)
+    clients_sample_df_display = clients_sample_df.copy()
+
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Choose a page", ["Home", "Variable comparison"])
+
+    if page == "Home":
+        display_homepage(clients_sample_df)
+
+    elif page == "Variable comparison":
+        display_variable_comparison()
+
+    
 
 
 if __name__ == "__main__":
