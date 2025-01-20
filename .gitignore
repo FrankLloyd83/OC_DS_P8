@@ -5,3 +5,10 @@ plot_maker.ipynb
 plots/
 planning.md
 *.docx
+models/
+history*
+OUTPUT/
+*.pptx
+*.pdf
+.gitignore
+*.zip
